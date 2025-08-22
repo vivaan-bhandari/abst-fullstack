@@ -24,6 +24,7 @@ from rest_framework.routers import DefaultRouter
 from adls.views import ADLViewSet
 from residents.views import ResidentViewSet, FacilityViewSet, FacilitySectionViewSet
 from users.views import UserViewSet, FacilityAccessViewSet
+
 router = DefaultRouter()
 router.register(r'adls', ADLViewSet)
 router.register(r'residents', ResidentViewSet)
@@ -38,7 +39,6 @@ def health_check(request):
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/', include(router.urls)),
-    path('api/scheduling/', include('scheduling.urls')),
     path('api/health/', health_check, name='health_check'),
     path('', health_check, name='root_health_check'),
 ]

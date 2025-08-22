@@ -25,7 +25,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 SECRET_KEY = config('SECRET_KEY', default="django-insecure-&pxe!*r)xq%glv2j6z&q(cc4d0bw=2ziospg&nt9((7tf_6i6u")
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = config('DEBUG', default=True, cast=bool)
+DEBUG = config('DEBUG', default=False, cast=bool)
 
 ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='localhost,127.0.0.1,.railway.app,.vercel.app', cast=lambda v: [s.strip() for s in v.split(',')])
 
@@ -46,7 +46,6 @@ INSTALLED_APPS = [
     "residents",
     "adls",
     "users",
-    "scheduling",
 ]
 
 MIDDLEWARE = [
@@ -170,7 +169,7 @@ STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 # Security settings for production
-USE_HTTPS = config('USE_HTTPS', default=False, cast=bool)
+USE_HTTPS = config('USE_HTTPS', default=True, cast=bool)
 if not DEBUG:
     SECURE_BROWSER_XSS_FILTER = True
     SECURE_CONTENT_TYPE_NOSNIFF = True
