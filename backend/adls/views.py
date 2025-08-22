@@ -15,18 +15,18 @@ import pandas as pd
 import io
 
 
-
 class ADLViewSet(viewsets.ModelViewSet):
-    queryset = ADL.objects.filter(is_deleted=False)  # Only show non-deleted records by default
+    queryset = ADL.objects.filter(is_deleted=False)
     serializer_class = ADLSerializer
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ['resident', 'status', 'question_text']
     search_fields = ['question_text', 'resident__name', 'status']
     ordering_fields = ['created_at', 'total_minutes', 'total_hours', 'resident__name']
-    ordering = ['-created_at']  # Default ordering
+    ordering = ['-created_at']
 
     def get_queryset(self):
         user = self.request.user
+        
         # Superadmins and admins see all ADLs
         if user.is_staff or getattr(user, 'role', None) in ['superadmin', 'admin']:
             return ADL.objects.filter(is_deleted=False)
@@ -38,13 +38,13 @@ class ADLViewSet(viewsets.ModelViewSet):
             user=user,
             status='approved'
         ).values_list('facility_id', flat=True)
-
+        
         # Get all sections in those facilities
         allowed_sections = FacilitySection.objects.filter(facility_id__in=approved_facility_ids)
-
+        
         # Get all residents in those sections
         allowed_residents = Resident.objects.filter(facility_section__in=allowed_sections)
-
+        
         # Only ADLs for allowed residents
         return ADL.objects.filter(resident__in=allowed_residents, is_deleted=False)
 
@@ -147,645 +147,6 @@ class ADLViewSet(viewsets.ModelViewSet):
         )
         return Response(summary)
 
-    @action(detail=False, methods=['post'], url_path='upload', permission_classes=[AllowAny])
-    def upload_file(self, request):
-        file = request.FILES.get('file')
-        if not file:
-            return Response({'error': 'No file uploaded.'}, status=status.HTTP_400_BAD_REQUEST)
-        
-        # Get facility_id from request if provided
-        facility_id = request.POST.get('facility_id')
-        target_facility = None
-        if facility_id:
-            try:
-                from residents.models import Facility
-                target_facility = Facility.objects.get(id=facility_id)
-            except Facility.DoesNotExist:
-                return Response({'error': f'Facility with ID {facility_id} not found.'}, status=status.HTTP_400_BAD_REQUEST)
-        
-        try:
-            if file.name.endswith('.csv'):
-                df = pd.read_csv(file)
-            else:
-                df = pd.read_excel(file)
-        except Exception as e:
-            return Response({'error': f'File parsing error: {e}'}, status=status.HTTP_400_BAD_REQUEST)
-
-        created_adls = 0
-        updated_adls = 0
-        created_residents = 0
-        
-        # Define the per-day/shift time columns
-        per_day_shift_cols = [
-            'MonShift1Time', 'MonShift2Time', 'MonShift3Time',
-            'TuesShift1Time', 'TuesShift2Time', 'TuesShift3Time',
-            'WedShift1Time', 'WedShift2Time', 'WedShift3Time',
-            'ThursShift1Time', 'ThursShift2Time', 'ThursShift3Time',
-            'FriShift1Time', 'FriShift2Time', 'FriShift3Time',
-            'SatShift1Time', 'SatShift2Time', 'SatShift3Time',
-            'SunShift1Time', 'SunShift2Time', 'SunShift3Time'
-        ]
-        
-        # Check if this is a resident-based CSV (one row per resident) or ADL-based CSV (one row per ADL)
-        is_resident_based = 'Name' in df.columns and 'TotalCareTime' in df.columns and 'QuestionText' not in df.columns
-        is_adl_answer_export = 'QuestionText' in df.columns and 'ResidentName' in df.columns
-        
-        if is_adl_answer_export:
-            # Handle ADL Answer Export format (like the Murray Highland Answer Export)
-            print("Processing ADL Answer Export format...")
-            
-            for index, row in df.iterrows():
-                try:
-                    # Get question text
-                    question_text = row.get('QuestionText', '')
-                    if pd.isna(question_text) or not str(question_text).strip():
-                        continue
-                    question_text = str(question_text).strip()
-                    
-                    # Get resident name
-                    resident_name = row.get('ResidentName', '')
-                    if pd.isna(resident_name) or not str(resident_name).strip():
-                        continue
-                    resident_name = str(resident_name).strip()
-                    
-                    # Get facility information
-                    facility_id = row.get('FacilityID', '')
-                    if pd.isna(facility_id):
-                        facility_id = ''
-                    else:
-                        facility_id = str(facility_id).strip()
-                    
-                    facility_name = row.get('FacilityName', '')
-                    if pd.isna(facility_name):
-                        facility_name = ''
-                    else:
-                        facility_name = str(facility_name).strip()
-                    
-                    from residents.models import Facility
-                    facility = target_facility  # Always use the selected facility from the upload context
-                    
-                    if not facility:
-                        print(f"Row {index}: No facility selected for import. Skipping row.")
-                        continue
-                    
-                    # Get or create section
-                    section_name = row.get('FacilitySectionName', 'whole building')
-                    if pd.isna(section_name):
-                        section_name = 'whole building'
-                    else:
-                        section_name = str(section_name).strip()
-                    
-                    from residents.models import FacilitySection, Resident
-                    facility_section, _ = FacilitySection.objects.get_or_create(
-                        name=section_name,
-                        facility=facility
-                    )
-                    
-                    # Get or create resident
-                    current_resident, created = Resident.objects.get_or_create(
-                        name=resident_name,
-                        facility_section=facility_section,
-                        defaults={
-                            'status': row.get('ResidentStatus', 'Active'),
-                        }
-                    )
-                    
-                    if created:
-                        created_residents += 1
-                    
-                    # Store resident total shift times for chart calculations (like Oregon ABST)
-                    resident_total_shift_times = {}
-                    resident_total_shift_cols = [
-                        'ResidentTotalMonShift1Time', 'ResidentTotalMonShift2Time', 'ResidentTotalMonShift3Time',
-                        'ResidentTotalTuesShift1Time', 'ResidentTotalTuesShift2Time', 'ResidentTotalTuesShift3Time',
-                        'ResidentTotalWedShift1Time', 'ResidentTotalWedShift2Time', 'ResidentTotalWedShift3Time',
-                        'ResidentTotalThursShift1Time', 'ResidentTotalThursShift2Time', 'ResidentTotalThursShift3Time',
-                        'ResidentTotalFriShift1Time', 'ResidentTotalFriShift2Time', 'ResidentTotalFriShift3Time',
-                        'ResidentTotalSatShift1Time', 'ResidentTotalSatShift2Time', 'ResidentTotalSatShift3Time',
-                        'ResidentTotalSunShift1Time', 'ResidentTotalSunShift2Time', 'ResidentTotalSunShift3Time',
-                    ]
-                    
-                    for col in resident_total_shift_cols:
-                        if col in df.columns:
-                            value = row.get(col, 0)
-                            if pd.isna(value) or value is None:
-                                value = 0
-                            resident_total_shift_times[col] = int(float(value))
-                    
-                    # Update resident with total shift times
-                    current_resident.total_shift_times = resident_total_shift_times
-                    current_resident.save()
-                    
-                    # Find the ADLQuestion object
-                    adl_question = ADLQuestion.objects.filter(text__iexact=question_text).first()
-                    if not adl_question:
-                        # Create the question if it doesn't exist
-                        adl_question, _ = ADLQuestion.objects.get_or_create(
-                            text=question_text,
-                            defaults={'order': 999}
-                        )
-                    
-                    # Get task time from CSV
-                    task_time = row.get('TaskTime', 0)
-                    if pd.isna(task_time) or task_time is None:
-                        task_time = 0
-                    
-                    # Prepare per-day/shift times dict from individual shift columns
-                    # CSV values represent minutes, but frontend expects frequency (1 if activity occurs, 0 if not)
-                    per_day_shift_times = {}
-                    total_frequency_from_shifts = 0
-                    for col in per_day_shift_cols:
-                        if col in df.columns:
-                            value = row.get(col, 0)
-                            if pd.isna(value) or value is None:
-                                value = 0
-                            # Convert minutes to frequency: 1 if activity occurs, 0 if not
-                            frequency = 1 if int(float(value)) > 0 else 0
-                            per_day_shift_times[col] = frequency
-                            total_frequency_from_shifts += frequency
-                    
-                    # Calculate total minutes (sum of all shift values directly)
-                    total_minutes = total_frequency_from_shifts
-                    total_hours = float(total_minutes) / 60 if total_minutes else 0
-                    
-                    # Update or create ADL entry
-                    adl, created = ADL.objects.update_or_create(
-                        resident=current_resident,
-                        adl_question=adl_question,
-                        defaults={
-                            'question_text': question_text,
-                            'minutes': int(task_time),
-                            'frequency': int(total_frequency_from_shifts),
-                            'total_minutes': total_minutes,
-                            'total_hours': total_hours,
-                            'status': row.get('ResidentStatus', 'Complete'),
-                            'per_day_shift_times': per_day_shift_times,
-                        }
-                    )
-                    
-                    if created:
-                        created_adls += 1
-                    else:
-                        updated_adls += 1
-                    
-                    print(f"Row {index}: Processed '{question_text}' for resident '{resident_name}' - {task_time}min x {total_frequency} = {total_minutes} total minutes")
-                    
-                except Exception as e:
-                    print(f"Error processing row {index}: {e}")
-                    continue
-                    
-        elif is_resident_based:
-            # Handle resident-based CSV format (like the Murray Highland export)
-            print("Processing resident-based CSV format...")
-            
-            for index, row in df.iterrows():
-                try:
-                    # Get resident name
-                    resident_name = row.get('Name', '')
-                    if pd.isna(resident_name) or not str(resident_name).strip():
-                        continue
-                    resident_name = str(resident_name).strip()
-                    
-                    # Get facility information
-                    facility_id = row.get('FacilityID', '')
-                    if pd.isna(facility_id):
-                        facility_id = ''
-                    else:
-                        facility_id = str(facility_id).strip()
-                    
-                    facility_name = row.get('FacilityName', '')
-                    if pd.isna(facility_name):
-                        facility_name = ''
-                    else:
-                        facility_name = str(facility_name).strip()
-                    
-                    from residents.models import Facility
-                    facility = None
-                    
-                    # Try to find facility by ID first
-                    if facility_id:
-                        try:
-                            facility = Facility.objects.get(facility_id=facility_id)
-                        except Facility.DoesNotExist:
-                            # Try alternative ID mappings for Murray Highland
-                            if facility_id == '50R460':
-                                try:
-                                    facility = Facility.objects.get(name__iexact='Murray Highland')
-                                except Facility.DoesNotExist:
-                                    pass
-                            pass
-                    
-                    # If not found by ID, try by name
-                    if not facility and facility_name:
-                        try:
-                            facility = Facility.objects.get(name__iexact=facility_name)
-                        except Facility.DoesNotExist:
-                            pass
-                    
-                    if not facility:
-                        print(f"Row {index}: Facility not found for FacilityID '{facility_id}' or name '{facility_name}'. Skipping row.")
-                        continue
-                    
-                    # Get or create section
-                    section_name = row.get('FacilitySectionName', 'whole building')
-                    if pd.isna(section_name):
-                        section_name = 'whole building'
-                    else:
-                        section_name = str(section_name).strip()
-                    
-                    from residents.models import FacilitySection, Resident
-                    facility_section, _ = FacilitySection.objects.get_or_create(
-                        name=section_name,
-                        facility=facility
-                    )
-                    
-                    # Get or create resident
-                    current_resident, created = Resident.objects.get_or_create(
-                        name=resident_name,
-                        facility_section=facility_section,
-                        defaults={
-                            'status': row.get('Status', 'Active'),
-                        }
-                    )
-                    
-                    if created:
-                        created_residents += 1
-                    
-                    # Store resident total shift times for chart calculations (like Oregon ABST)
-                    resident_total_shift_times = {}
-                    resident_total_shift_cols = [
-                        'ResidentTotalMonShift1Time', 'ResidentTotalMonShift2Time', 'ResidentTotalMonShift3Time',
-                        'ResidentTotalTuesShift1Time', 'ResidentTotalTuesShift2Time', 'ResidentTotalTuesShift3Time',
-                        'ResidentTotalWedShift1Time', 'ResidentTotalWedShift2Time', 'ResidentTotalWedShift3Time',
-                        'ResidentTotalThursShift1Time', 'ResidentTotalThursShift2Time', 'ResidentTotalThursShift3Time',
-                        'ResidentTotalFriShift1Time', 'ResidentTotalFriShift2Time', 'ResidentTotalFriShift3Time',
-                        'ResidentTotalSatShift1Time', 'ResidentTotalSatShift2Time', 'ResidentTotalSatShift3Time',
-                        'ResidentTotalSunShift1Time', 'ResidentTotalSunShift2Time', 'ResidentTotalSunShift3Time',
-                    ]
-                    
-                    for col in resident_total_shift_cols:
-                        if col in df.columns:
-                            value = row.get(col, 0)
-                            if pd.isna(value) or value is None:
-                                value = 0
-                            resident_total_shift_times[col] = int(float(value))
-                    
-                    # Update resident with total shift times
-                    current_resident.total_shift_times = resident_total_shift_times
-                    current_resident.save()
-                    
-                    # Prepare per-day/shift times dict
-                    per_day_shift_times = {}
-                    for col in per_day_shift_cols:
-                        if col in df.columns:
-                            value = row.get(col, 0)
-                            if pd.isna(value) or value is None:
-                                value = 0
-                            per_day_shift_times[col] = int(float(value))  # Handle decimal values
-                    
-                    # Calculate total minutes from shift times
-                    total_minutes = sum(per_day_shift_times.values())
-                    total_hours = float(total_minutes) / 60 if total_minutes else 0
-                    
-                    # For resident-based CSV, we need to create individual ADL records for each standard question
-                    # Get all standard ADL questions
-                    standard_questions = ADLQuestion.objects.all().order_by('order')
-                    
-                    if not standard_questions.exists():
-                        # If no questions exist, seed them first
-                        from adls.seed_adl_questions import seed_adl_questions
-                        seed_adl_questions()
-                        standard_questions = ADLQuestion.objects.all().order_by('order')
-                    
-                    # Create realistic ADL data based on total care time
-                    # Instead of distributing evenly, create realistic activity patterns
-                    questions_count = standard_questions.count()
-                    if questions_count > 0:
-                        # Define realistic activity patterns (minutes per activity, frequency per day)
-                        activity_patterns = [
-                            {'minutes': 15, 'frequency': 2},   # Personal hygiene
-                            {'minutes': 5, 'frequency': 8},    # Safety checks
-                            {'minutes': 3, 'frequency': 12},   # Call lights
-                            {'minutes': 10, 'frequency': 3},   # Communication
-                            {'minutes': 8, 'frequency': 4},    # Behavioral monitoring
-                            {'minutes': 8, 'frequency': 4},    # Physical monitoring
-                            {'minutes': 20, 'frequency': 2},   # Leisure activities
-                            {'minutes': 12, 'frequency': 3},   # Non-drug interventions
-                            {'minutes': 15, 'frequency': 6},   # Cognitive cueing
-                            {'minutes': 25, 'frequency': 2},   # Treatments
-                            {'minutes': 10, 'frequency': 3},   # Pain management
-                            {'minutes': 8, 'frequency': 4},    # Medication
-                            {'minutes': 30, 'frequency': 3},   # Eating assistance
-                            {'minutes': 15, 'frequency': 4},   # Ambulation
-                            {'minutes': 10, 'frequency': 6},   # Repositioning
-                            {'minutes': 20, 'frequency': 3},   # Transfers
-                            {'minutes': 45, 'frequency': 1},   # Bathing
-                            {'minutes': 15, 'frequency': 4},   # Bowel/bladder
-                            {'minutes': 20, 'frequency': 2},   # Dressing
-                            {'minutes': 15, 'frequency': 2},   # Grooming
-                            {'minutes': 30, 'frequency': 1},   # Housekeeping
-                            {'minutes': 10, 'frequency': 2},   # Additional care
-                        ]
-                        
-                        # Calculate total expected minutes from patterns
-                        total_expected = sum(pattern['minutes'] * pattern['frequency'] for pattern in activity_patterns)
-                        
-                        # Scale patterns to match total care time from CSV
-                        scale_factor = total_minutes / total_expected if total_expected > 0 else 1
-                        
-                        for i, adl_question in enumerate(standard_questions):
-                            if i < len(activity_patterns):
-                                pattern = activity_patterns[i]
-                                # Scale the pattern to match total care time
-                                scaled_minutes = int(pattern['minutes'] * scale_factor)
-                                scaled_frequency = max(1, int(pattern['frequency'] * scale_factor))
-                                
-                                # Calculate total minutes for this activity
-                                activity_total_minutes = scaled_minutes * scaled_frequency
-                                
-                                # Create realistic per-day shift times distribution
-                                # Distribute based on typical care patterns
-                                question_per_day_shift_times = {}
-                                for col in per_day_shift_cols:
-                                    # Use original shift times but scale for this activity
-                                    original_value = per_day_shift_times.get(col, 0)
-                                    # Distribute based on activity type and frequency
-                                    if 'Shift1' in col:  # Day shift - most activities
-                                        question_per_day_shift_times[col] = max(1, original_value // (questions_count * 2))
-                                    elif 'Shift2' in col:  # Swing shift - moderate activities
-                                        question_per_day_shift_times[col] = max(0, original_value // (questions_count * 4))
-                                    else:  # NOC shift - minimal activities
-                                        question_per_day_shift_times[col] = max(0, original_value // (questions_count * 8))
-                                
-                                # Update or create ADL entry for this specific question
-                                adl, created = ADL.objects.update_or_create(
-                                    resident=current_resident,
-                                    adl_question=adl_question,
-                                    defaults={
-                                        'question_text': adl_question.text,
-                                        'minutes': scaled_minutes,
-                                        'frequency': scaled_frequency,
-                                        'total_minutes': activity_total_minutes,
-                                        'total_hours': float(activity_total_minutes) / 60 if activity_total_minutes else 0,
-                                        'status': row.get('Status', 'Complete'),
-                                        'per_day_shift_times': question_per_day_shift_times,
-                                    }
-                                )
-                            else:
-                                # Fallback for any additional questions
-                                fallback_minutes = max(5, total_minutes // (questions_count * 2))
-                                fallback_frequency = max(1, total_minutes // (questions_count * fallback_minutes))
-                                
-                                adl, created = ADL.objects.update_or_create(
-                                    resident=current_resident,
-                                    adl_question=adl_question,
-                                    defaults={
-                                        'question_text': adl_question.text,
-                                        'minutes': fallback_minutes,
-                                        'frequency': fallback_frequency,
-                                        'total_minutes': fallback_minutes * fallback_frequency,
-                                        'total_hours': float(fallback_minutes * fallback_frequency) / 60,
-                                        'status': row.get('Status', 'Complete'),
-                                        'per_day_shift_times': {},
-                                    }
-                                )
-                            
-                            if created:
-                                created_adls += 1
-                            else:
-                                updated_adls += 1
-                    else:
-                        # Fallback: create a single aggregated ADL record
-                        default_question_text = "Total caregiving time for resident"
-                        adl_question, _ = ADLQuestion.objects.get_or_create(
-                            text=default_question_text,
-                            defaults={'order': 999}
-                        )
-                        
-                        adl, created = ADL.objects.update_or_create(
-                            resident=current_resident,
-                            adl_question=adl_question,
-                            defaults={
-                                'question_text': default_question_text,
-                                'minutes': total_minutes,
-                                'frequency': 1,
-                                'total_minutes': total_minutes,
-                                'total_hours': total_hours,
-                                'status': row.get('Status', 'Complete'),
-                                'per_day_shift_times': per_day_shift_times,
-                            }
-                        )
-                        
-                        if created:
-                            created_adls += 1
-                        else:
-                            updated_adls += 1
-                    
-                    print(f"Row {index}: Processed resident '{resident_name}' with {total_minutes} total minutes")
-                    
-                except Exception as e:
-                    print(f"Error processing row {index}: {e}")
-                    continue
-        else:
-            # Handle ADL-based CSV format (original logic)
-            print("Processing ADL-based CSV format...")
-            current_resident = None
-            
-            for index, row in df.iterrows():
-                try:
-                    # Check if this is a new resident (Name or ResidentName is not blank)
-                    resident_name = row.get('Name', row.get('ResidentName', ''))
-                    if pd.isna(resident_name):
-                        resident_name = ''
-                    else:
-                        resident_name = str(resident_name).strip()
-                    
-                    if resident_name:  # New resident block starts
-                        # Get facility by FacilityID or name (do NOT create)
-                        facility_id = row.get('FacilityID', '')
-                        if pd.isna(facility_id):
-                            facility_id = ''
-                        else:
-                            facility_id = str(facility_id).strip()
-                        facility_name = row.get('FacilityName', '')
-                        if pd.isna(facility_name):
-                            facility_name = ''
-                        else:
-                            facility_name = str(facility_name).strip()
-                        from residents.models import Facility
-                        facility = None
-                        
-                        # Try to find facility by ID first
-                        if facility_id:
-                            try:
-                                facility = Facility.objects.get(facility_id=facility_id)
-                            except Facility.DoesNotExist:
-                                # Try alternative ID mappings for Murray Highland
-                                if facility_id == '50R460':
-                                    try:
-                                        facility = Facility.objects.get(name__iexact='Murray Highland')
-                                    except Facility.DoesNotExist:
-                                        pass
-                                pass
-                        
-                        # If not found by ID, try by name with flexible matching
-                        if not facility and facility_name:
-                            # Try exact match first
-                            try:
-                                facility = Facility.objects.get(name__iexact=facility_name)
-                            except Facility.DoesNotExist:
-                                pass
-                            
-                            # If still not found, try partial matching for common variations
-                            if not facility:
-                                # Handle common variations like "Murray Highland" vs "Murray Highland Care" etc.
-                                facility_name_clean = facility_name.lower().replace('care', '').replace('center', '').replace('facility', '').strip()
-                                try:
-                                    facility = Facility.objects.filter(name__icontains=facility_name_clean).first()
-                                except:
-                                    pass
-                        
-                        if not facility:
-                            print(f"Row {index}: Facility not found for FacilityID '{facility_id}' or name '{facility_name}'. Skipping row.")
-                            print(f"Available facilities: {list(Facility.objects.values_list('name', 'facility_id'))}")
-                            continue  # Skip this row if facility not found
-                        else:
-                            print(f"Row {index}: Found facility '{facility.name}' (ID: {facility.facility_id}) for CSV data: FacilityID='{facility_id}', FacilityName='{facility_name}'")
-                        # Get or create section under this facility
-                        section_name = row.get('FacilitySectionName', row.get('Section', 'Memory Care Residents'))
-                        if pd.isna(section_name):
-                            section_name = 'Memory Care Residents'
-                        else:
-                            section_name = str(section_name).strip()
-                        from residents.models import FacilitySection
-                        facility_section, _ = FacilitySection.objects.get_or_create(
-                            name=section_name,
-                            facility=facility
-                        )
-                        
-                        # Get or create resident (always look up by name, section, and facility, ignoring case/whitespace)
-                        resident_name_clean = resident_name.strip().lower()
-                        section_name_clean = section_name.strip().lower()
-                        facility_id_clean = facility_id.strip().lower()
-
-                        from residents.models import Resident, FacilitySection, Facility
-                        
-                        # Use the facility we already found above, don't create a new one
-                        if not facility:
-                            print(f"Row {index}: Facility not found for FacilityID '{facility_id}' or name '{facility_name}'. Skipping row.")
-                            continue
-                        
-                        try:
-                            facility_section = FacilitySection.objects.get(name__iexact=section_name_clean, facility=facility)
-                            current_resident = Resident.objects.get(name__iexact=resident_name_clean, facility_section=facility_section)
-                        except (FacilitySection.DoesNotExist, Resident.DoesNotExist):
-                            # Only create section and resident, not facility
-                            facility_section, _ = FacilitySection.objects.get_or_create(
-                                name=section_name,
-                                facility=facility,
-                                defaults={}
-                            )
-                            current_resident, _ = Resident.objects.get_or_create(
-                                name=resident_name,
-                                facility_section=facility_section,
-                                defaults={
-                                    'status': row.get('Status', row.get('ResidentStatus', 'Active')),
-                                }
-                            )
-                        
-                        # Prepare per-day/shift times dict for this specific ADL
-                        per_day_shift_times = {}
-                        for col in per_day_shift_cols:
-                            if col in df.columns:
-                                value = row.get(col, 0)
-                                # Convert to int, handle NaN/None
-                                if pd.isna(value) or value is None:
-                                    value = 0
-                                per_day_shift_times[col] = int(value)
-                        
-                        # Calculate totals from per-day/shift times
-                        total_per_day_shift = sum(per_day_shift_times.values())
-                        
-                        # Get question text and other fields
-                        question_text = row.get('QuestionText', '')
-                        if pd.isna(question_text):
-                            question_text = ''
-                        else:
-                            question_text = str(question_text).strip()
-                        
-                        if not question_text:
-                            continue  # Skip rows without question text
-                        
-                        # Find the ADLQuestion object
-                        adl_question = ADLQuestion.objects.filter(text__iexact=question_text).first()
-                        if not adl_question:
-                            print(f"Row {index}: ADLQuestion not found for '{question_text}'. Skipping row.")
-                            continue  # Skip if master question not found
-                        
-                        # Get task time and frequency
-                        task_time = row.get('TaskTime', 0)
-                        if pd.isna(task_time) or task_time is None:
-                            task_time = 0
-                        
-                        total_frequency = row.get('TotalFrequency', 0)
-                        if pd.isna(total_frequency) or total_frequency is None:
-                            total_frequency = 0
-                        
-                        # Set total_minutes to sum of all per-day/shift times
-                        total_minutes = total_per_day_shift
-                        total_hours = float(total_minutes) / 60 if total_minutes else 0
-                        
-                        # Update or create ADL entry
-                        adl, created = ADL.objects.update_or_create(
-                            resident=current_resident,
-                            adl_question=adl_question,
-                            defaults={
-                                'question_text': question_text,  # for legacy/compat
-                                'minutes': int(task_time),
-                                'frequency': int(total_frequency),
-                                'total_minutes': int(total_minutes),
-                                'total_hours': total_hours,
-                                'status': row.get('ResidentStatus', 'Active'),
-                                'per_day_shift_times': per_day_shift_times,
-                            }
-                        )
-                        
-                        if created:
-                            created_adls += 1
-                        else:
-                            updated_adls += 1
-                        
-                except Exception as e:
-                    # Log the error but continue processing other rows
-                    print(f"Error processing row {index}: {e}")
-                    continue
-        
-        return Response({
-            'message': f'Import completed successfully!',
-            'details': {
-                'created_residents': created_residents,
-                'created_adls': created_adls,
-                'updated_adls': updated_adls,
-                'total_processed': created_adls + updated_adls
-            }
-        })
-
-    @action(detail=False, methods=['get'], url_path='grouped_by_resident', permission_classes=[AllowAny])
-    def grouped_by_resident(self, request):
-        # Get all residents with at least one ADL
-        from residents.models import Resident
-        residents = Resident.objects.filter(adls__isnull=False).distinct()
-        grouped = []
-        for resident in residents:
-            adls = self.queryset.filter(resident=resident)
-            adl_data = ADLSerializer(adls, many=True).data
-            resident_data = ResidentSerializer(resident).data
-            grouped.append({
-                'resident': resident_data,
-                'adls': adl_data
-            })
-        return Response(grouped)
-
     @action(detail=False, methods=['get'])
     def by_facility(self, request):
         """Get all ADLs for a facility"""
@@ -855,67 +216,258 @@ class ADLViewSet(viewsets.ModelViewSet):
         # Use the same filtering logic as get_queryset
         user = request.user
         
+        print(f"DEBUG: User: {user.username}, is_staff: {user.is_staff}, role: {getattr(user, 'role', None)}")
+        
+        # Initialize variables
+        adls = None
+        residents = None
+        
         # Superadmins and admins see all ADLs
         if user.is_staff or getattr(user, 'role', None) in ['superadmin', 'admin']:
-            adls = ADL.objects.filter(is_deleted=False)
+            print("DEBUG: User is staff/admin - checking if facility filter is applied")
+            # Check if a specific facility is requested
+            facility_id = request.query_params.get('facility_id')
+            if facility_id:
+                # Specific facility selected - filter by that facility only
+                print(f"DEBUG: Staff/admin user selected specific facility: {facility_id}")
+                sections = FacilitySection.objects.filter(facility_id=facility_id)
+                residents = Resident.objects.filter(facility_section__in=sections)
+                adls = ADL.objects.filter(resident__in=residents, is_deleted=False)
+                print(f"DEBUG: Filtered to {residents.count()} residents in facility {facility_id}")
+            else:
+                # No facility selected - show ALL ADLs (aggregated view)
+                print("DEBUG: Staff/admin user - no facility selected, showing ALL ADLs for aggregation")
+                adls = ADL.objects.filter(is_deleted=False)
         else:
+            print("DEBUG: User is NOT staff/admin - applying facility access filtering")
             # For anonymous users, return empty data
             if user.is_anonymous:
                 return Response({
-                    'per_shift': [{'day': day, 'Day': 0, 'Eve': 0, 'NOC': 0} for day in ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']],
+                    'per_shift': [{'day': day, 'Day': 0, 'Swing': 0, 'NOC': 0} for day in ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']],
                     'per_day': [{'day': day, 'hours': 0} for day in ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']]
                 })
             
-            # Get approved facility IDs for this user
-            approved_facility_ids = FacilityAccess.objects.filter(
-                user=user,
-                status='approved'
-            ).values_list('facility_id', flat=True)
-
-            # Get all sections in those facilities
-            allowed_sections = FacilitySection.objects.filter(facility_id__in=approved_facility_ids)
-
-            # Get all residents in those sections
-            allowed_residents = Resident.objects.filter(facility_section__in=allowed_sections)
-
-            # Only ADLs for allowed residents
-            adls = ADL.objects.filter(resident__in=allowed_residents, is_deleted=False)
+            # For aggregated view (no facility selected), show ALL ADL
+            # For specific facility view, filter by that facility only
+            facility_id = request.query_params.get('facility_id')
+            
+            if facility_id:
+                # Specific facility selected - filter by that facility only
+                print(f"DEBUG: Specific facility selected: {facility_id}")
+                approved_facility_ids = FacilityAccess.objects.filter(
+                    user=user,
+                    status='approved'
+                ).values_list('facility_id', flat=True)
+                
+                if int(facility_id) not in approved_facility_ids:
+                    return Response({'error': 'Access denied to this facility'}, status=403)
+                
+                # Get sections and residents for this specific facility
+                sections = FacilitySection.objects.filter(facility_id=facility_id)
+                residents = Resident.objects.filter(facility_section__in=sections)
+                adls = ADL.objects.filter(resident__in=residents, is_deleted=False)
+                print(f"DEBUG: Filtered to {residents.count()} residents in facility {facility_id}")
+            else:
+                # No facility selected - show ALL ADLs (aggregated view)
+                print("DEBUG: No facility selected - showing ALL ADLs for aggregation")
+                adls = ADL.objects.filter(is_deleted=False)
         
-        # Optionally filter by facility_id
-        facility_id = request.query_params.get('facility_id')
-        if facility_id:
-            sections = FacilitySection.objects.filter(facility_id=facility_id)
-            residents = Resident.objects.filter(facility_section__in=sections)
-            adls = adls.filter(resident__in=residents)
+        # If residents is not defined yet (for staff/admin users), get all residents
+        if residents is None:
+            residents = Resident.objects.filter(adls__in=adls).distinct()
+            print("DEBUG: Using all residents for staff/admin user")
+        
+        # Facility filtering is now handled above in the user permission logic
         
         shift_map = {
             'Shift1': 'Day',
-            'Shift2': 'Eve',
+            'Shift2': 'Swing',  # Changed from 'Eve' to 'Swing' to match frontend
             'Shift3': 'NOC',
         }
         days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
         day_prefixes = ['Mon', 'Tues', 'Wed', 'Thurs', 'Fri', 'Sat', 'Sun']
         per_shift = [
-            {'day': day, 'Day': 0, 'Eve': 0, 'NOC': 0} for day in days
+            {'day': day, 'Day': 0, 'Swing': 0, 'NOC': 0} for day in days  # Changed 'Eve' to 'Swing'
         ]
         
-        # Use resident total shift times for chart calculation (like Oregon ABST)
-        # Get unique residents from ADLs
-        residents = Resident.objects.filter(adls__in=adls).distinct()
+        # Calculate chart data directly from ADL records
+        # Check if we have a facility_id parameter from the request
+        request_facility_id = request.query_params.get('facility_id')
+        if request_facility_id:
+            # We already have the filtered residents for this specific facility
+            print(f"DEBUG: Using pre-filtered residents for facility {request_facility_id}")
+            # Don't override the residents variable - keep using the pre-filtered ones
+        else:
+            # No facility selected - get all residents from ADLs for aggregation
+            residents = Resident.objects.filter(adls__in=adls).distinct()
+            print("DEBUG: Using all residents for aggregation")
+        
+        # Debug: print which facilities are being processed
+        facility_counts = {}
+        for resident in residents:
+            facility_name = resident.facility_section.facility.name
+            facility_counts[facility_name] = facility_counts.get(facility_name, 0) + 1
+        
+        print(f"DEBUG: Request facility_id: {request_facility_id}")
+        print(f"DEBUG: Facilities being processed: {facility_counts}")
+        print(f"DEBUG: Total residents being processed: {residents.count()}")
+        if request_facility_id:
+            print(f"DEBUG: Expected: Only residents from facility {request_facility_id}")
+        else:
+            print(f"DEBUG: Expected: All residents from all facilities (aggregated)")
+        
+        total_hours_processed = 0
+        total_adls_processed = 0
+        
+        # FIXED: Use resident total_shift_times instead of ADL records for aggregation
+        # This matches how individual facility charts work
         for resident in residents:
             resident_total_times = resident.total_shift_times or {}
-            for i, prefix in enumerate(day_prefixes):
-                for shift_num, shift_name in shift_map.items():
-                    col = f'ResidentTotal{prefix}{shift_num}Time'
-                    minutes = resident_total_times.get(col, 0)
-                    per_shift[i][shift_name] += minutes / 60.0
+            if resident_total_times:
+                print(f"DEBUG: Resident {resident.name} has total_shift_times: {resident_total_times}")
+                # Process resident's total shift times (like Oregon ABST)
+                for day_key, minutes in resident_total_times.items():
+                    if minutes and minutes > 0:
+                        # Parse the column name (e.g., "ResidentTotalMonShift1Time" -> Monday, Day)
+                        day_name = None
+                        shift_type = None
+                        
+                        # Parse the day
+                        if 'Mon' in day_key:
+                            day_name = 0  # Monday
+                        elif 'Tues' in day_key:
+                            day_name = 1  # Tuesday
+                        elif 'Wed' in day_key:
+                            day_name = 2  # Wednesday
+                        elif 'Thurs' in day_key:
+                            day_name = 3  # Thursday
+                        elif 'Fri' in day_key:
+                            day_name = 4  # Friday
+                        elif 'Sat' in day_key:
+                            day_name = 5  # Saturday
+                        elif 'Sun' in day_key:
+                            day_name = 6  # Sunday
+                        
+                        # Parse the shift type
+                        if 'Shift1' in day_key:
+                            shift_type = 'Day'
+                        elif 'Shift2' in day_key:
+                            shift_type = 'Swing'
+                        elif 'Shift3' in day_key:
+                            shift_type = 'NOC'
+                        
+                        if day_name is not None and shift_type is not None:
+                            # Convert minutes to hours directly
+                            hours = minutes / 60.0
+                            per_shift[day_name][shift_type] += hours
+                            total_hours_processed += hours
+                            print(f"DEBUG: Added {hours:.2f} hours to {per_shift[day_name]['day']} {shift_type} (minutes: {minutes}) from resident {resident.name}")
+            else:
+                print(f"DEBUG: Resident {resident.name} has NO total_shift_times data")
+        
+        # Fallback: If no resident total_shift_times data, try ADL records
+        if total_hours_processed == 0:
+            print("DEBUG: No resident total_shift_times data found, falling back to ADL records...")
+            for resident in residents:
+                # Get all ADLs for this resident
+                resident_adls = adls.filter(resident=resident)
+                for adl in resident_adls:
+                    total_adls_processed += 1
+                    hours_added = 0
+                    
+                    # Use per_day_shift_times as actual minutes (not frequency)
+                    if adl.per_day_shift_times and isinstance(adl.per_day_shift_times, dict):
+                        # per_day_shift_times contains actual minutes for each shift
+                        for day_key, minutes in adl.per_day_shift_times.items():
+                            if minutes and minutes > 0:  # Only process shifts with actual minutes
+                                # Parse the column name (e.g., "MonShift1Time" -> Monday, Day)
+                                day_name = None
+                                shift_type = None
+                                
+                                # Parse the day
+                                if 'Mon' in day_key:
+                                    day_name = 0  # Monday
+                                elif 'Tues' in day_key:
+                                    day_name = 1  # Tuesday
+                                elif 'Wed' in day_key:
+                                    day_name = 2  # Wednesday
+                                elif 'Thurs' in day_key:
+                                    day_name = 3  # Thursday
+                                elif 'Fri' in day_key:
+                                    day_name = 4  # Friday
+                                elif 'Sat' in day_key:
+                                    day_name = 5  # Saturday
+                                elif 'Sun' in day_key:
+                                    day_name = 6  # Sunday
+                                
+                                # Parse the shift type
+                                if 'Shift1' in day_key:
+                                    shift_type = 'Day'
+                                elif 'Shift2' in day_key:
+                                    shift_type = 'Swing'  # Changed from 'Eve' to 'Swing'
+                                elif 'Shift3' in day_key:
+                                    shift_type = 'NOC'
+                                
+                                if day_name is not None and shift_type is not None:
+                                    # Convert minutes to hours directly
+                                    hours = minutes / 60.0
+                                    per_shift[day_name][shift_type] += hours
+                                    hours_added += hours
+                                    print(f"DEBUG: Added {hours:.2f} hours to {per_shift[day_name]['day']} {shift_type} (minutes: {minutes})")
+                    
+                    # If no per_day_shift_times or no hours were added, use total_minutes as fallback
+                    if hours_added == 0 and adl.total_minutes and adl.total_minutes > 0:
+                        # Distribute total_minutes evenly across all days and shifts
+                        minutes_per_day = adl.total_minutes / 7.0
+                        hours_per_day = minutes_per_day / 60.0
+                        
+                        # Distribute evenly across all three shifts
+                        hours_per_shift = hours_per_day / 3.0
+                        
+                        for i in range(7):
+                            per_shift[i]['Day'] += hours_per_shift
+                            per_shift[i]['Swing'] += hours_per_shift
+                            per_shift[i]['NOC'] += hours_per_shift
+                        
+                        total_hours_processed += adl.total_minutes / 60.0
+                        print(f"DEBUG: Fallback - distributed {adl.total_minutes} minutes ({hours_per_day:.2f} hours per day, {hours_per_shift:.2f} per shift) for resident {adl.resident.name}")
+                    elif hours_added > 0:
+                        total_hours_processed += hours_added
+
         for s in per_shift:
-            for shift in ['Day', 'Eve', 'NOC']:
+            for shift in ['Day', 'Swing', 'NOC']:  # Changed 'Eve' to 'Swing'
                 s[shift] = round(s[shift], 2)
         per_day = [
-            {'day': s['day'], 'hours': round(s['Day'] + s['Eve'] + s['NOC'], 2)}
+            {'day': s['day'], 'hours': round(s['Day'] + s['Swing'] + s['NOC'], 2)}  # Changed 'Eve' to 'Swing'
             for s in per_shift
         ]
+        
+        # Debug logging
+        print(f"DEBUG: ADL count: {adls.count()}")
+        print(f"DEBUG: Resident count: {residents.count()}")
+        print(f"DEBUG: Total ADLs processed: {total_adls_processed}")
+        print(f"DEBUG: Total hours processed: {total_hours_processed:.2f}")
+        
+        # Debug: Show expected totals from individual facilities
+        print(f"DEBUG: Expected totals from individual facilities:")
+        for facility_name, resident_count in facility_counts.items():
+            facility_residents = [r for r in residents if r.facility_section.facility.name == facility_name]
+            facility_total_hours = 0
+            for resident in facility_residents:
+                resident_total_times = resident.total_shift_times or {}
+                for minutes in resident_total_times.values():
+                    if minutes and minutes > 0:
+                        facility_total_hours += minutes / 60.0
+            print(f"  {facility_name}: {facility_total_hours:.2f} hours ({resident_count} residents)")
+        
+        print(f"DEBUG: Per shift data: {per_shift}")
+        print(f"DEBUG: Per day data: {per_day}")
+        
+        # Additional debugging for first few ADLs
+        sample_adls = adls[:3]
+        for i, adl in enumerate(sample_adls):
+            print(f"DEBUG: ADL {i+1}: resident={adl.resident.name}, total_minutes={adl.total_minutes}, per_day_shift_times={adl.per_day_shift_times}")
+        
         return Response({
             'per_shift': per_shift,
             'per_day': per_day

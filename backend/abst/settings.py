@@ -46,6 +46,7 @@ INSTALLED_APPS = [
     "residents",
     "adls",
     "users",
+    "scheduling",
 ]
 
 MIDDLEWARE = [
