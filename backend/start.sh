@@ -22,13 +22,32 @@ gunicorn abst.wsgi:application \
 # Wait a moment for gunicorn to start
 sleep 5
 
-# Check if gunicorn is running
-if ! pgrep -f "gunicorn.*abst.wsgi:application" > /dev/null; then
-    echo "ERROR: Gunicorn failed to start"
-    exit 1
-fi
+# Check if gunicorn is running by checking the port
+echo "Checking if gunicorn is running on port $PORT..."
+sleep 10  # Give gunicorn more time to start
 
-echo "Gunicorn started successfully. PID: $(pgrep -f 'gunicorn.*abst.wsgi:application')"
+# Try to connect to the port to see if server is responding
+if command -v curl >/dev/null 2>&1; then
+    if curl -s "http://localhost:$PORT/" >/dev/null 2>&1; then
+        echo "✅ Gunicorn is running and responding on port $PORT"
+    else
+        echo "❌ Gunicorn is not responding on port $PORT"
+        exit 1
+    fi
+else
+    # Fallback: just check if port is listening
+    if command -v netstat >/dev/null 2>&1; then
+        if netstat -tuln | grep ":$PORT " >/dev/null 2>&1; then
+            echo "✅ Port $PORT is listening (gunicorn likely running)"
+        else
+            echo "❌ Port $PORT is not listening"
+            exit 1
+        fi
+    else
+        # Last resort: just assume it's working after delay
+        echo "⚠️  Cannot verify gunicorn status, assuming it's running after delay"
+    fi
+fi
 
 # Now run setup tasks in the background
 echo "Running setup tasks in background..."
@@ -68,9 +87,22 @@ echo "Running setup tasks in background..."
 
 # Keep the script running and monitor gunicorn
 echo "Monitoring gunicorn process..."
-while pgrep -f "gunicorn.*abst.wsgi:application" > /dev/null; do
-    sleep 10
-done
-
-echo "Gunicorn process stopped unexpectedly"
-exit 1 
+while true; do
+    # Check if port is still listening
+    if command -v netstat >/dev/null 2>&1; then
+        if ! netstat -tuln | grep ":$PORT " >/dev/null 2>&1; then
+            echo "❌ Port $PORT stopped listening - gunicorn may have crashed"
+            exit 1
+        fi
+    fi
+    
+    # Check if server is responding
+    if command -v curl >/dev/null 2>&1; then
+        if ! curl -s "http://localhost:$PORT/" >/dev/null 2>&1; then
+            echo "❌ Server stopped responding - gunicorn may have crashed"
+            exit 1
+        fi
+    fi
+    
+    sleep 30
+done 

@@ -11,6 +11,8 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y \
     gcc \
     postgresql-client \
+    curl \
+    net-tools \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy the entire project first
