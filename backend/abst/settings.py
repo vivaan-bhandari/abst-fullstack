@@ -27,6 +27,26 @@ SECRET_KEY = config('SECRET_KEY', default="django-insecure-&pxe!*r)xq%glv2j6z&q(
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = config('DEBUG', default=False, cast=bool)
 
+# HTTPS/SSL Settings
+USE_HTTPS = config('USE_HTTPS', default=False, cast=bool)
+SECURE_SSL_REDIRECT = USE_HTTPS
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https') if USE_HTTPS else None
+
+# Security settings for HTTPS
+if USE_HTTPS:
+    SECURE_BROWSER_XSS_FILTER = True
+    SECURE_CONTENT_TYPE_NOSNIFF = True
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_HSTS_SECONDS = 31536000  # 1 year
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+else:
+    # Development settings
+    SECURE_BROWSER_XSS_FILTER = False
+    SECURE_CONTENT_TYPE_NOSNIFF = False
+    SESSION_COOKIE_SECURE = False
+    CSRF_COOKIE_SECURE = False
+
 ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='localhost,127.0.0.1,.railway.app,.vercel.app', cast=lambda v: [s.strip() for s in v.split(',')])
 
 # Application definition
@@ -43,11 +63,14 @@ INSTALLED_APPS = [
     "django_filters",
     "corsheaders",
     "whitenoise.runserver_nostatic",
+    "django_extensions",
     "residents",
     "adls",
     "users",
+    "scheduling",
 ]
 
+# Middleware configuration
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",
@@ -81,14 +104,30 @@ REST_FRAMEWORK = {
 }
 
 # CORS settings
-CORS_ALLOWED_ORIGINS = config('CORS_ALLOWED_ORIGINS', default='https://abst-frontend.vercel.app,https://abst-frontend-git-main-vivaan-bhandari.vercel.app,http://localhost:3000,https://localhost:3000', cast=lambda v: [s.strip() for s in v.split(',')])
+if DEBUG:
+    # Allow all origins in development, including HTTP origins when backend is HTTPS
+    CORS_ALLOW_ALL_ORIGINS = True
+    CORS_ALLOWED_ORIGINS = [
+        'http://localhost:3000',
+        'https://localhost:3000',
+        'http://127.0.0.1:3000',
+        'https://127.0.0.1:3000'
+    ]
+    # Additional CORS settings for mixed HTTP/HTTPS development
+    CORS_ALLOW_CREDENTIALS = True
+    CORS_ALLOW_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']
+    CORS_ALLOW_HEADERS = ['accept', 'accept-encoding', 'authorization', 'content-type', 'dnt', 'origin', 'user-agent', 'x-csrftoken', 'x-requested-with']
+    CORS_EXPOSE_HEADERS = ['content-type', 'content-disposition']
+else:
+    CORS_ALLOWED_ORIGINS = config('CORS_ALLOWED_ORIGINS', default='https://abst-frontend.vercel.app,https://abst-frontend-git-main-vivaan-bhandari.vercel.app,http://localhost:3000,https://localhost:3000', cast=lambda v: [s.strip() for s in v.split(',')])
+
 CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOW_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']
 CORS_ALLOW_HEADERS = ['accept', 'accept-encoding', 'authorization', 'content-type', 'dnt', 'origin', 'user-agent', 'x-csrftoken', 'x-requested-with']
 CORS_EXPOSE_HEADERS = ['content-type', 'content-disposition']
 
 # CSRF settings
-CSRF_TRUSTED_ORIGINS = config('CSRF_TRUSTED_ORIGINS', default='https://abst-fullstack-production.up.railway.app,https://localhost:3000,http://localhost:3000,https://abst-frontend.vercel.app,https://abst-frontend-git-main-vivaan-bhandari.vercel.app', cast=lambda v: [s.strip() for s in v.split(',')])
+CSRF_TRUSTED_ORIGINS = config('CSRF_TRUSTED_ORIGINS', default='https://abst-fullstack-production.up.railway.app,https://localhost:3000,http://localhost:3000,https://127.0.0.1:3000,http://127.0.0.1:3000,https://abst-frontend.vercel.app,https://abst-frontend-git-main-vivaan-bhandari.vercel.app', cast=lambda v: [s.strip() for s in v.split(',')])
 
 ROOT_URLCONF = "abst.urls"
 
@@ -167,16 +206,3 @@ STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
 # https://docs.djangoproject.com/en/4.2/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
-
-# Security settings for production
-USE_HTTPS = config('USE_HTTPS', default=True, cast=bool)
-if not DEBUG:
-    SECURE_BROWSER_XSS_FILTER = True
-    SECURE_CONTENT_TYPE_NOSNIFF = True
-    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
-    SECURE_HSTS_SECONDS = 31536000
-    SECURE_SSL_REDIRECT = True
-    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
-    SESSION_COOKIE_SECURE = True
-    CSRF_COOKIE_SECURE = True
-    X_FRAME_OPTIONS = 'DENY'
