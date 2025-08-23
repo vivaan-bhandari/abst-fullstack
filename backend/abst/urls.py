@@ -67,11 +67,23 @@ def minimal_check(request):
     """Minimal health check that will definitely work"""
     return HttpResponse("OK", content_type="text/plain")
 
+def debug_info(request):
+    """Debug endpoint to see what's working"""
+    import os
+    return JsonResponse({
+        'status': 'running',
+        'port': os.environ.get('PORT', 'unknown'),
+        'database_url': os.environ.get('DATABASE_URL', 'unknown')[:20] + '...' if os.environ.get('DATABASE_URL') else 'none',
+        'debug': os.environ.get('DEBUG', 'unknown'),
+        'timestamp': timezone.now().isoformat()
+    })
+
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/', include(router.urls)),
     path('api/health/', health_check, name='health_check'),
     path('api/startup/', startup_check, name='startup_check'),
     path('api/minimal/', minimal_check, name='minimal_check'),
+    path('api/debug/', debug_info, name='debug_info'),
     path('', minimal_check, name='root_health_check'),
 ]
