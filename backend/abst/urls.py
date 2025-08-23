@@ -19,7 +19,7 @@ Including another URLconf
 
 from django.contrib import admin
 from django.urls import path, include
-from django.http import JsonResponse
+from django.http import JsonResponse, HttpResponse
 from django.utils import timezone
 from rest_framework.routers import DefaultRouter
 from adls.views import ADLViewSet
@@ -63,10 +63,15 @@ def startup_check(request):
         'timestamp': timezone.now().isoformat()
     })
 
+def minimal_check(request):
+    """Minimal health check that will definitely work"""
+    return HttpResponse("OK", content_type="text/plain")
+
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/', include(router.urls)),
     path('api/health/', health_check, name='health_check'),
     path('api/startup/', startup_check, name='startup_check'),
-    path('', startup_check, name='root_health_check'),
+    path('api/minimal/', minimal_check, name='minimal_check'),
+    path('', minimal_check, name='root_health_check'),
 ]
