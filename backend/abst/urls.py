@@ -55,9 +55,18 @@ def health_check(request):
         'version': '1.0.0'
     })
 
+def startup_check(request):
+    """Simple health check that doesn't require database access"""
+    return JsonResponse({
+        'status': 'starting',
+        'message': 'Django app is starting up',
+        'timestamp': timezone.now().isoformat()
+    })
+
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/', include(router.urls)),
     path('api/health/', health_check, name='health_check'),
-    path('', health_check, name='root_health_check'),
+    path('api/startup/', startup_check, name='startup_check'),
+    path('', startup_check, name='root_health_check'),
 ]
