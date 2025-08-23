@@ -41,6 +41,35 @@ class ResidentViewSet(viewsets.ModelViewSet):
         # Only residents in allowed sections
         return Resident.objects.filter(facility_section__in=allowed_sections)
 
+    def list(self, request, *args, **kwargs):
+        """Custom list method to handle facility_id filtering"""
+        facility_id = request.query_params.get('facility_id')
+        
+        if facility_id:
+            # Filter by specific facility
+            try:
+                sections = FacilitySection.objects.filter(facility_id=facility_id)
+                residents = Resident.objects.filter(facility_section__in=sections)
+                
+                # Apply pagination
+                page = self.paginate_queryset(residents)
+                if page is not None:
+                    serializer = self.get_serializer(page, many=True)
+                    return self.get_paginated_response(serializer.data)
+                
+                serializer = self.get_serializer(residents, many=True)
+                return Response({
+                    'count': residents.count(),
+                    'results': serializer.data
+                })
+                
+            except Exception as e:
+                logger.error(f"Error filtering residents by facility {facility_id}: {e}")
+                return Response({'error': 'Invalid facility ID'}, status=400)
+        
+        # Default behavior - use get_queryset
+        return super().list(request, *args, **kwargs)
+
     @action(detail=False, methods=['get'], permission_classes=[AllowAny])
     def debug_count(self, request):
         """Debug endpoint to check resident count without authentication"""
@@ -189,7 +218,7 @@ class ResidentViewSet(viewsets.ModelViewSet):
             # For anonymous users, return empty data
             if user.is_anonymous:
                 return Response({
-                    'per_shift': [{'day': day, 'Day': 0, 'Eve': 0, 'NOC': 0} for day in ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']],
+                    'per_shift': [{'day': day, 'Day': 0, 'Swing': 0, 'NOC': 0} for day in ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']],
                     'per_day': [{'day': day, 'hours': 0} for day in ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']]
                 })
             
@@ -207,13 +236,13 @@ class ResidentViewSet(viewsets.ModelViewSet):
         
         shift_map = {
             'Shift1': 'Day',
-            'Shift2': 'Eve',
+            'Shift2': 'Swing',
             'Shift3': 'NOC',
         }
         days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
         day_prefixes = ['Mon', 'Tues', 'Wed', 'Thurs', 'Fri', 'Sat', 'Sun']
         per_shift = [
-            {'day': day, 'Day': 0, 'Eve': 0, 'NOC': 0} for day in days
+            {'day': day, 'Day': 0, 'Swing': 0, 'NOC': 0} for day in days
         ]
         
         # Use resident total shift times for chart calculation (like Oregon ABST)
@@ -224,10 +253,10 @@ class ResidentViewSet(viewsets.ModelViewSet):
                 minutes = resident_total_times.get(col, 0)
                 per_shift[i][shift_name] += minutes / 60.0
         for s in per_shift:
-            for shift in ['Day', 'Eve', 'NOC']:
+            for shift in ['Day', 'Swing', 'NOC']:
                 s[shift] = round(s[shift], 2)
         per_day = [
-            {'day': s['day'], 'hours': round(s['Day'] + s['Eve'] + s['NOC'], 2)}
+            {'day': s['day'], 'hours': round(s['Day'] + s['Swing'] + s['NOC'], 2)}
             for s in per_shift
         ]
         return Response({
@@ -289,7 +318,7 @@ class FacilityViewSet(viewsets.ModelViewSet):
             # For anonymous users, return empty data
             if user.is_anonymous:
                 return Response({
-                    'per_shift': [{'day': day, 'Day': 0, 'Eve': 0, 'NOC': 0} for day in ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']],
+                    'per_shift': [{'day': day, 'Day': 0, 'Swing': 0, 'NOC': 0} for day in ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']],
                     'per_day': [{'day': day, 'hours': 0} for day in ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']]
                 })
             
@@ -307,13 +336,13 @@ class FacilityViewSet(viewsets.ModelViewSet):
         
         shift_map = {
             'Shift1': 'Day',
-            'Shift2': 'Eve',
+            'Shift2': 'Swing',
             'Shift3': 'NOC',
         }
         days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
         day_prefixes = ['Mon', 'Tues', 'Wed', 'Thurs', 'Fri', 'Sat', 'Sun']
         per_shift = [
-            {'day': day, 'Day': 0, 'Eve': 0, 'NOC': 0} for day in days
+            {'day': day, 'Day': 0, 'Swing': 0, 'NOC': 0} for day in days
         ]
         
         # Use resident total shift times for chart calculation (like Oregon ABST)
@@ -325,10 +354,10 @@ class FacilityViewSet(viewsets.ModelViewSet):
                     minutes = resident_total_times.get(col, 0)
                     per_shift[i][shift_name] += minutes / 60.0
         for s in per_shift:
-            for shift in ['Day', 'Eve', 'NOC']:
+            for shift in ['Day', 'Swing', 'NOC']:
                 s[shift] = round(s[shift], 2)
         per_day = [
-            {'day': s['day'], 'hours': round(s['Day'] + s['Eve'] + s['NOC'], 2)}
+            {'day': s['day'], 'hours': round(s['Day'] + s['Swing'] + s['NOC'], 2)}
             for s in per_shift
         ]
         return Response({
@@ -357,7 +386,7 @@ class FacilitySectionViewSet(viewsets.ModelViewSet):
             # For anonymous users, return empty data
             if user.is_anonymous:
                 return Response({
-                    'per_shift': [{'day': day, 'Day': 0, 'Eve': 0, 'NOC': 0} for day in ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']],
+                    'per_shift': [{'day': day, 'Day': 0, 'Swing': 0, 'NOC': 0} for day in ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']],
                     'per_day': [{'day': day, 'hours': 0} for day in ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']]
                 })
             
@@ -376,14 +405,14 @@ class FacilitySectionViewSet(viewsets.ModelViewSet):
         # Map shift columns to readable names
         shift_map = {
             'Shift1': 'Day',
-            'Shift2': 'Eve',
+            'Shift2': 'Swing',
             'Shift3': 'NOC',
         }
         days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
         day_prefixes = ['Mon', 'Tues', 'Wed', 'Thurs', 'Fri', 'Sat', 'Sun']
         # Initialize summary structure
         per_shift = [
-            {'day': day, 'Day': 0, 'Eve': 0, 'NOC': 0} for day in days
+            {'day': day, 'Day': 0, 'Swing': 0, 'NOC': 0} for day in days
         ]
         
         # Use resident total shift times for chart calculation (like Oregon ABST)
@@ -396,11 +425,11 @@ class FacilitySectionViewSet(viewsets.ModelViewSet):
                     per_shift[i][shift_name] += minutes / 60.0  # convert to hours
         # Optionally round to 2 decimals
         for s in per_shift:
-            for shift in ['Day', 'Eve', 'NOC']:
+            for shift in ['Day', 'Swing', 'NOC']:
                 s[shift] = round(s[shift], 2)
         # Simple per-day total
         per_day = [
-            {'day': s['day'], 'hours': round(s['Day'] + s['Eve'] + s['NOC'], 2)}
+            {'day': s['day'], 'hours': round(s['Day'] + s['Swing'] + s['NOC'], 2)}
             for s in per_shift
         ]
         return Response({

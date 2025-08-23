@@ -3,9 +3,15 @@ from rest_framework import serializers
 from .models import FacilityAccess
 from residents.models import Facility
 
+class FacilitySerializer(serializers.ModelSerializer):
+    """Serializer for facility details"""
+    class Meta:
+        model = Facility
+        fields = ['id', 'name', 'address', 'city', 'state', 'zip_code', 'phone', 'email', 'facility_type', 'facility_id', 'admin_name']
+
 class FacilityAccessSerializer(serializers.ModelSerializer):
     user = serializers.PrimaryKeyRelatedField(queryset=User.objects.all())
-    facility = serializers.PrimaryKeyRelatedField(queryset=Facility.objects.all())
+    facility = FacilitySerializer(read_only=True)  # Include full facility details
     user_username = serializers.CharField(source='user.username', read_only=True)
     user_email = serializers.CharField(source='user.email', read_only=True)
     facility_name = serializers.CharField(source='facility.name', read_only=True)
