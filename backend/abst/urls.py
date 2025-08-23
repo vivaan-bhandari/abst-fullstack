@@ -20,6 +20,7 @@ Including another URLconf
 from django.contrib import admin
 from django.urls import path, include
 from django.http import JsonResponse
+from django.utils import timezone
 from rest_framework.routers import DefaultRouter
 from adls.views import ADLViewSet
 from residents.views import ResidentViewSet, FacilityViewSet, FacilitySectionViewSet
@@ -47,7 +48,12 @@ router.register(r'scheduling/ai-recommendations', AIRecommendationViewSet)
 router.register(r'scheduling/dashboard', SchedulingDashboardViewSet, basename='scheduling-dashboard')
 
 def health_check(request):
-    return JsonResponse({'status': 'healthy', 'message': 'Django app is running'})
+    return JsonResponse({
+        'status': 'healthy', 
+        'message': 'Django app is running',
+        'timestamp': timezone.now().isoformat(),
+        'version': '1.0.0'
+    })
 
 urlpatterns = [
     path('admin/', admin.site.urls),
