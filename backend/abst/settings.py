@@ -29,7 +29,7 @@ DEBUG = config('DEBUG', default=False, cast=bool)
 
 # HTTPS/SSL Settings
 USE_HTTPS = config('USE_HTTPS', default=True, cast=bool)  # Default to True for Railway
-SECURE_SSL_REDIRECT = USE_HTTPS
+SECURE_SSL_REDIRECT = False  # Disable SSL redirect to prevent loops on Railway
 SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https') if USE_HTTPS else None
 
 # Security settings for HTTPS
