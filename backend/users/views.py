@@ -115,8 +115,8 @@ class FacilityAccessViewSet(viewsets.ModelViewSet):
     
     @action(detail=False, methods=['get'])
     def my_access(self, request):
-        """Get current user's facility access"""
-        access_list = FacilityAccess.objects.filter(user=request.user)
+        """Get current user's approved facility access"""
+        access_list = FacilityAccess.objects.filter(user=request.user, status='approved')
         serializer = FacilityAccessSerializer(access_list, many=True)
         return Response(serializer.data)
     

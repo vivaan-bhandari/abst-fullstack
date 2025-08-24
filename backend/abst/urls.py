@@ -19,7 +19,8 @@ Including another URLconf
 
 from django.contrib import admin
 from django.urls import path, include
-from django.http import JsonResponse
+from django.http import JsonResponse, HttpResponse
+from django.utils import timezone
 from rest_framework.routers import DefaultRouter
 from adls.views import ADLViewSet
 from residents.views import ResidentViewSet, FacilityViewSet, FacilitySectionViewSet
@@ -47,11 +48,42 @@ router.register(r'scheduling/ai-recommendations', AIRecommendationViewSet)
 router.register(r'scheduling/dashboard', SchedulingDashboardViewSet, basename='scheduling-dashboard')
 
 def health_check(request):
-    return JsonResponse({'status': 'healthy', 'message': 'Django app is running'})
+    return JsonResponse({
+        'status': 'healthy', 
+        'message': 'Django app is running',
+        'timestamp': timezone.now().isoformat(),
+        'version': '1.0.0'
+    })
+
+def startup_check(request):
+    """Simple health check that doesn't require database access"""
+    return JsonResponse({
+        'status': 'starting',
+        'message': 'Django app is starting up',
+        'timestamp': timezone.now().isoformat()
+    })
+
+def minimal_check(request):
+    """Minimal health check that will definitely work"""
+    return HttpResponse("OK", content_type="text/plain")
+
+def debug_info(request):
+    """Debug endpoint to see what's working"""
+    import os
+    return JsonResponse({
+        'status': 'running',
+        'port': os.environ.get('PORT', 'unknown'),
+        'database_url': os.environ.get('DATABASE_URL', 'unknown')[:20] + '...' if os.environ.get('DATABASE_URL') else 'none',
+        'debug': os.environ.get('DEBUG', 'unknown'),
+        'timestamp': timezone.now().isoformat()
+    })
 
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/', include(router.urls)),
     path('api/health/', health_check, name='health_check'),
-    path('', health_check, name='root_health_check'),
+    path('api/startup/', startup_check, name='startup_check'),
+    path('api/minimal/', minimal_check, name='minimal_check'),
+    path('api/debug/', debug_info, name='debug_info'),
+    path('', minimal_check, name='root_health_check'),
 ]

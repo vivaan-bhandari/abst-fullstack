@@ -12,7 +12,17 @@
   "devDependencies": {
     "concurrently": "^8.2.2"
   },
-  "keywords": ["abst", "healthcare", "staffing", "django", "react"],
+  "keywords": [
+    "abst",
+    "healthcare",
+    "staffing",
+    "django",
+    "react"
+  ],
   "author": "ABST Team",
-  "license": "MIT"
-} 
+  "license": "MIT",
+  "dependencies": {
+    "@types/react-beautiful-dnd": "^13.1.8",
+    "react-beautiful-dnd": "^13.1.1"
+  }
+}
