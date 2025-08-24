@@ -12,11 +12,26 @@ class HasFacilityAccess(permissions.BasePermission):
             return True
         
         # For facility-specific data, check if user has access
-        facility_id = request.data.get('facility') or request.query_params.get('facility')
+        facility_id = request.data.get('facility_id') or request.data.get('facility') or request.query_params.get('facility')
         if facility_id:
             return FacilityAccess.objects.filter(
                 user=request.user,
                 facility_id=facility_id,
+                status='approved'
+            ).exists()
+        
+        return True
+    
+    def has_object_permission(self, request, view, obj):
+        # Allow admins to access everything
+        if request.user.is_staff or getattr(request.user, 'role', None) == 'admin':
+            return True
+        
+        # For facility-specific data, check if user has access to the object's facility
+        if hasattr(obj, 'facility'):
+            return FacilityAccess.objects.filter(
+                user=request.user,
+                facility=obj.facility,
                 status='approved'
             ).exists()
         
@@ -33,7 +48,7 @@ class IsFacilityAdmin(permissions.BasePermission):
             return True
         
         # Check if user is a facility admin for the specific facility
-        facility_id = request.data.get('facility') or request.query_params.get('facility')
+        facility_id = request.data.get('facility_id') or request.data.get('facility') or request.query_params.get('facility')
         if facility_id:
             return FacilityAccess.objects.filter(
                 user=request.user,

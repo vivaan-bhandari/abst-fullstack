@@ -24,6 +24,11 @@ from rest_framework.routers import DefaultRouter
 from adls.views import ADLViewSet
 from residents.views import ResidentViewSet, FacilityViewSet, FacilitySectionViewSet
 from users.views import UserViewSet, FacilityAccessViewSet
+from scheduling.views import (
+    StaffViewSet, ShiftTemplateViewSet, ShiftViewSet, StaffAssignmentViewSet,
+    StaffAvailabilityViewSet, AIInsightViewSet, AIRecommendationViewSet,
+    SchedulingDashboardViewSet
+)
 
 router = DefaultRouter()
 router.register(r'adls', ADLViewSet)
@@ -32,6 +37,14 @@ router.register(r'users', UserViewSet)
 router.register(r'facilities', FacilityViewSet)
 router.register(r'facilitysections', FacilitySectionViewSet)
 router.register(r'facility-access', FacilityAccessViewSet, basename='facility-access')
+router.register(r'scheduling/staff', StaffViewSet)
+router.register(r'scheduling/shift-templates', ShiftTemplateViewSet)
+router.register(r'scheduling/shifts', ShiftViewSet)
+router.register(r'scheduling/assignments', StaffAssignmentViewSet)
+router.register(r'scheduling/availability', StaffAvailabilityViewSet)
+router.register(r'scheduling/ai-insights', AIInsightViewSet)
+router.register(r'scheduling/ai-recommendations', AIRecommendationViewSet)
+router.register(r'scheduling/dashboard', SchedulingDashboardViewSet, basename='scheduling-dashboard')
 
 def health_check(request):
     return JsonResponse({'status': 'healthy', 'message': 'Django app is running'})

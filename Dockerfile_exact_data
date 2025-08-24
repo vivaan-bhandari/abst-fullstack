@@ -1,0 +1,56 @@
+# Use Python 3.9 slim image
+FROM python:3.9-slim
+
+# Set environment variables
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+ENV DJANGO_SETTINGS_MODULE=abst.settings
+
+# Install system dependencies and Node.js 18 (compatible with react-scripts 5.0.1)
+RUN apt-get update && apt-get install -y \
+    curl \
+    postgresql-client \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Node.js 16 (specific version known to work with react-scripts 5.0.1)
+RUN curl -fsSL https://deb.nodesource.com/setup_16.x | bash - \
+    && apt-get install -y nodejs
+
+# Set work directory
+WORKDIR /app
+
+# Copy requirements and install Python dependencies
+COPY backend/requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy backend code
+COPY backend/ .
+
+# Copy pre-built frontend files (we'll build locally to avoid Docker dependency issues)
+COPY frontend/build/ ./staticfiles/
+
+# Create a startup script that uses the exact database
+RUN echo '#!/bin/bash\n\
+echo "🚀 Starting ABST Application with EXACT DATA..."\n\
+echo "✅ This includes all your real facilities, residents, ADLs, and scheduling data!"\n\
+echo ""\n\
+echo "Setting up database..."\n\
+python manage.py migrate\n\
+python manage.py collectstatic --noinput\n\
+echo ""\n\
+echo "✅ Database ready with your exact data!"\n\
+echo "✅ Starting server on http://localhost:8000"\n\
+echo "✅ Frontend will be available at http://localhost:8000"\n\
+echo ""\n\
+echo "🌐 Open your browser to: http://localhost:8000"\n\
+echo "🔐 Login with: admin / admin123 (or any existing users from your database)"\n\
+echo ""\n\
+python manage.py runserver 0.0.0.0:8000' > start.sh
+
+RUN chmod +x start.sh
+
+# Expose port
+EXPOSE 8000
+
+# Start the application
+CMD ["./start.sh"]
